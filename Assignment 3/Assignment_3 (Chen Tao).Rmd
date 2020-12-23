@@ -1,0 +1,327 @@
+---
+title: "Incomplete Data Analysis - Assignment 3"
+author: "Chen Tao"
+output: pdf_document
+geometry: margin = 0.65in
+fontsize: 12pt
+---
+
+I have used R Markdown to complete this assignment this time and you can find the R Markdown document for this assignment in my GitHub repository (https://github.com/TAO-Chen632/Incomplete-Data-Analysis.git). It is stored in the folder named "Assignment 3" and my GitHub Username is "TAO-Chen632".
+
+```{r setup, message = FALSE}
+# Setup - Load all the packages that will be used in this assignment
+knitr::opts_chunk$set(echo = TRUE)
+library(mice)
+library(JointAI)
+library(ggplot2)
+library(devtools)
+library(reshape2)
+library(RColorBrewer)
+library(knitr)
+```
+
+
+## Question 1. Solutions.
+
+**(a)** Let me load and examine the data set `nhanes`.
+```{r}
+data("nhanes")
+dim(nhanes)
+summary(nhanes)
+```
+From the output, we can see that this data set has 4 variables and 25 observations. The variable `age` is fully observed and the variables `bmi`, `hyp` and `chl` are subject to missingness. Overall, this data set has 27 missing values in total and 12 observations have missing values. Hence, the percentage of the cases is incomplete is $12/25 \times 100\% = 48\%$.
+
+**(b)** Now, I am going to impute the data with the function `mice`. In step 2, our substantive model of interest is the normal linear regression model:
+$$bmi = \beta_0 + \beta_1 age + \beta_2 hyp + \beta_3 chl +\varepsilon, \ \ \ \varepsilon \sim N(0, \sigma^2).$$
+```{r}
+# Impute the data with `mice` using the defaults with seed = 1
+impu_Q1 <- mice(nhanes, seed = 1, printFlag = FALSE)
+# Predict `bmi` from `age`, `hyp` and `chl`
+fit_Q1 <- with(impu_Q1, lm(bmi ~ age + hyp + chl))
+# Pool the results
+estims_Q1 <- pool(fit_Q1)
+# Show the pooled results
+estims_Q1
+```
+From the outcome, we can see that the proportions of variance due to the missing data for the parameters $\beta_0$, $\beta_1$, $\beta_2$ and $\beta_3$ are 0.08938989, 0.68640637, 0.35043452 and 0.30408063 respectively, which are the values in the column `lambada`. The parameter $\beta_1$ which corresponds to the variable `age` appears to be most affected by the nonresponse, because its proportion of variance due to the missing data is the largest among all the parameters.
+
+**(c)** The R code for this question is shown below.
+```{r}
+# Repeat the analysis for seed = 2, 3, 4, 5, 6
+pool(with(mice(nhanes, seed = 2, printFlag = FALSE), lm(bmi ~ age + hyp + chl)))
+pool(with(mice(nhanes, seed = 3, printFlag = FALSE), lm(bmi ~ age + hyp + chl)))
+pool(with(mice(nhanes, seed = 4, printFlag = FALSE), lm(bmi ~ age + hyp + chl)))
+pool(with(mice(nhanes, seed = 5, printFlag = FALSE), lm(bmi ~ age + hyp + chl)))
+pool(with(mice(nhanes, seed = 6, printFlag = FALSE), lm(bmi ~ age + hyp + chl)))
+```
+From the results, we can see that the proportions of variance due to the missing data for each parameter, i.e., the values in the column `lambada`, vary a lot as the random seed changes, and which is larger or smaller is not fixed. Therefore, the conclusions of question (b) do not remain the same. The parameter that appears to be most affected by the missing values varies as the random seed changes. When `seed = 1`, such parameter is $\beta_0$, and when `seed = 3` or `seed = 6`, such parameter is $\beta_1$, and when `seed = 5`, such parameter is $\beta_2$, and when `seed = 4`, such parameter is $\beta_3$.
+
+**(d)** The R code for this question is shown in the following.
+```{r}
+# Repeat the analysis with M = 100 and the seed = 1, 2, 3, 4, 5, 6
+pool(with(mice(nhanes, m = 100, seed = 1, printFlag = FALSE), lm(bmi ~ age + hyp + chl)))
+pool(with(mice(nhanes, m = 100, seed = 2, printFlag = FALSE), lm(bmi ~ age + hyp + chl)))
+pool(with(mice(nhanes, m = 100, seed = 3, printFlag = FALSE), lm(bmi ~ age + hyp + chl)))
+pool(with(mice(nhanes, m = 100, seed = 4, printFlag = FALSE), lm(bmi ~ age + hyp + chl)))
+pool(with(mice(nhanes, m = 100, seed = 5, printFlag = FALSE), lm(bmi ~ age + hyp + chl)))
+pool(with(mice(nhanes, m = 100, seed = 6, printFlag = FALSE), lm(bmi ~ age + hyp + chl)))
+```
+I prefer the analyses with $M = 100$ to the analyses with $M = 5$. On one hand, it is because when the number $M$ of the copies of data sets increases, the results of the analysis become more stable and we can be more confident about them in any one specific run. For example, when $M = 100$ the estimates of the regression model parameters only differ by a small amount in each case. On the other hand, the extra simulation variance $B/M$ caused by the fact that the multiple imputation estimate of the parameter is estimated by finite $M$ will decrease if $M$ increases. Consequently, when $M$ increases, the total variance of the estimate $V^{MI} = \bar{U} + B + \frac{B}{M}$ and the proportion of variance in the parameter due to missing values $\lambda = \frac{B + \frac{B}{M}}{V^{MI}}$ will all decrease.
+
+
+## Question 2. Solutions.
+
+The R code for this question is shown in the following.
+```{r}
+# Load the data and check the dimension of it
+load("dataex2.Rdata")
+dim(dataex2)
+```
+```{r}
+# Initialize some variables
+beta1 <- 3
+# The variables `times1` and `times2` represent the times that the 95% confidence interval
+# contains the true value of beta1 under the two imputation approaches respectively.
+times1 <- times2 <- 0
+# n is the number of the data sets.
+n <- dim(dataex2)[3]
+
+# Do the setup run of `mice()` function
+impu0_Q2 <- mice(dataex2[ , , 1], maxit = 0)
+# Extract and modify the imputation methods
+meth1 <- meth2 <- impu0_Q2$method
+meth1["Y"] <- "norm.nob"
+meth2["Y"] <- "norm.boot"
+
+for (i in seq(n)){
+  data <- dataex2[ , , i]
+  # Perform the improper multiple imputation using stochastic regression imputation
+  impu1_Q2 <- mice(data, method = meth1, m = 20, seed = 1, printFlag = FALSE)
+  fit1_Q2 <- with(impu1_Q2, lm(Y ~ X))
+  estims1_Q2 <- pool(fit1_Q2)
+
+  # Calculate the lower bound and upper bound of the 95% confidence interval
+  # for beta1 under the first approach
+  lowerbound <- summary(estims1_Q2, conf.int = TRUE)[[7]][2]
+  upperbound <- summary(estims1_Q2, conf.int = TRUE)[[8]][2]
+  # Update the variable `times1`
+  if (beta1 >= lowerbound & beta1 <= upperbound){
+    times1 <- times1 + 1
+  }
+
+  # Perform the proper multiple imputation using the bootstrap
+  # based stochastic regression imputation
+  impu2_Q2 <- mice(data, method = meth2, m = 20, seed = 1, printFlag = FALSE)
+  fit2_Q2 <- with(impu2_Q2, lm(Y ~ X))
+  estims2_Q2 <- pool(fit2_Q2)
+
+  # Calculate the lower bound and upper bound of the 95% confidence interval
+  # for beta1 under the second approach
+  lowerbound <- summary(estims2_Q2, conf.int = TRUE)[[7]][2]
+  upperbound <- summary(estims2_Q2, conf.int = TRUE)[[8]][2]
+  # Update the variable `times2`
+  if (beta1 >= lowerbound & beta1 <= upperbound){
+    times2 <- times2 + 1
+  }
+}
+
+# Display the empirical coverage probabilities of the 95% confidence intervals
+# for beta1 under the two imputation approaches
+times1 / n
+times2 / n
+```
+In this question, in order to explore the effect that acknowledging or not acknowledging parameter uncertainty when performing step 1 of multiple imputation (MI) might have on the coverage of the corresponding confidence intervals, I have respectively performed the improper multiple imputation with the stochastic regression imputation (SRI) method and the proper multiple imputation with the bootstrap based stochastic regression imputation method on the given 100 data sets.
+
+From the results, we can see that when acknowledging the parameter uncertainty, i.e., performing the proper MI using the bootstrap based SRI, the empirical coverage probability of the 95% confidence intervals for $\beta_1$ is just 0.95, which means we repeat the experiment 100 times and the true value of $\beta_1$ falls in the confidence interval just 95 times. It coincides with the meaning of the 95% confidence interval and is a very sensible result. However, when we perform the improper MI using SRI, the parameter uncertainty is not acknowledged since the same estimates of the parameters are used for imputing all $M$ copies of the data set. In this case, the empirical coverage probability of the 95% confidence intervals for $\beta_1$ is only 0.88, which is lower than the expected probability 0.95. It is because the improper MI approach may lead to confidence intervals that are too narrow and so it will reduce the coverage probability of the confidence intervals.
+
+
+## Question 3. Solutions.
+
+Without loss of generality, we can assume that the linear (in the coefficients) regression model is given by
+$$Y_i = \beta_1 f_1(x_{i,1}, x_{i,2}, \ldots, x_{i,p}) + \beta_2 f_2(x_{i,1}, x_{i,2}, \ldots, x_{i,p}) + \cdots + \beta_k f_k(x_{i,1}, x_{i,2}, \ldots, x_{i,p}) + \varepsilon_i,$$
+where $x_{i,j}$ $(i=1,2,\ldots,n)$ are the values of the covariate variables $X_j$ $(j=1,2,\ldots,p)$ and $Y_i$ $(i=1,2,\ldots,n)$ are the response variables, and $\beta_1,\beta_2,\ldots,\beta_k$ are the coefficients of the regression model, and $f_1,f_2,\ldots,f_k$ are the functions of the values of the covariate variables $X_1,X_2,\ldots,X_p$, and $\varepsilon_i$ $(i=1,2,\ldots,n)$ are uncorrelated random variables with $E(\varepsilon_i)=0$ and $Var(\varepsilon_i)=\sigma^2$ where $\sigma$ is a constant, and $k,p,n \in N^{+}$ are constants.
+
+For the strategy (i), it first computes the predicted values from each fitted model in step 2:
+$$\widehat{y}_i^{(m)} = \widehat{\beta}_1^{(m)} f_1(x_{i,1}, x_{i,2}, \ldots, x_{i,p}) + \widehat{\beta}_2^{(m)} f_2(x_{i,1}, x_{i,2}, \ldots, x_{i,p}) + \cdots + \widehat{\beta}_k^{(m)} f_k(x_{i,1}, x_{i,2}, \ldots, x_{i,p}),$$
+where $\widehat{\beta}_s^{(m)}$ is the estimate of $\beta_s$ obtained from the $m$-th complete data set after imputation $(s=1,2,\ldots,k;\ m=1,2,\ldots,M)$ and $M$ is the number of the complete data set, and $i=1,2\ldots,n$.
+
+Then, it pools them according to Rubin's rule for point estimates, i.e., averaging the predicted values across the imputed data sets. Thus, the final predicted values after pooling are
+$$
+\begin{split}
+\widehat{y}_i &= \frac{1}{M}\sum_{m=1}^{M}\widehat{y}_i^{(m)}, \\
+&= \frac{1}{M}\sum_{m=1}^{M}\widehat{\beta}_1^{(m)}f_1 + \frac{1}{M}\sum_{m=1}^{M}\widehat{\beta}_2^{(m)}f_2 + \cdots + \frac{1}{M}\sum_{m=1}^{M}\widehat{\beta}_k^{(m)}f_k, \\
+&= \overline{\widehat{\beta}_1}f_1 + \overline{\widehat{\beta}_2}f_2 + \cdots + \overline{\widehat{\beta}_k}f_k, \qquad\qquad\qquad\qquad\qquad (1)
+\end{split}
+$$
+where $\overline{\widehat{\beta}_s}=\frac{1}{M}\sum_{m=1}^{M}\widehat{\beta}_s^{(m)}$ is the average of the estimates $\widehat{\beta}_s^{(1)}, \widehat{\beta}_s^{(2)}, \ldots, \widehat{\beta}_s^{(m)}$ across the imputed data sets $(s=1,2,\ldots,k)$, and $f_s=f_s(x_{i,1}, x_{i,2}, \ldots, x_{i,p})$ $(s=1,2,\ldots,k)$, and $i=1,2\ldots,n$.
+
+Next, for the strategy (ii), it first pools the regression coefficients from each fitted model in step 2 using Rubin's rule for point estimates. Therefore, after pooling, the final estimated regression coefficients $\widehat{\beta}_1^{\ast}, \widehat{\beta}_2^{\ast}, \ldots, \widehat{\beta}_k^{\ast}$ are
+$$
+\begin{split}
+\widehat{\beta}_1^{\ast} &= \frac{1}{M}\sum_{m=1}^{M}\widehat{\beta}_1^{(m)} = \overline{\widehat{\beta}_1}, \\
+\widehat{\beta}_2^{\ast} &= \frac{1}{M}\sum_{m=1}^{M}\widehat{\beta}_2^{(m)} = \overline{\widehat{\beta}_2}, \\
+&\ \ \ \ \ \ \ \ \cdots\cdots \\
+\widehat{\beta}_k^{\ast} &= \frac{1}{M}\sum_{m=1}^{M}\widehat{\beta}_k^{(m)} = \overline{\widehat{\beta}_k},
+\end{split}
+$$
+where the meanings of $\widehat{\beta}_s^{(m)}$ and $\overline{\widehat{\beta}_s}$ $(m=1,2,\ldots,M;\ s=1,2,\ldots,k)$ are the same as above.
+
+Then, it computes the predicted values using the pooled coefficients $\widehat{\beta}_1^{\ast},\widehat{\beta}_2^{\ast},\ldots,\widehat{\beta}_k^{\ast}$. Thus, the final predicted values are
+$$\widehat{y}_i = \widehat{\beta}_1^{\ast}f_1 + \widehat{\beta}_2^{\ast}f_2 + \cdots + \widehat{\beta}_k^{\ast}f_k = \overline{\widehat{\beta}_1}f_1 + \overline{\widehat{\beta}_2}f_2 + \cdots + \overline{\widehat{\beta}_k}f_k, \tag{2}$$
+where the meanings of $\overline{\widehat{\beta}_s}$ and $f_s$ $(s=1,2,\ldots,k)$ are also the same as above, and $i=1,2\ldots,n$.
+
+We can see that the formula (1) and formula (2) which are the expressions of the final predicted values derived by these two strategies are the same. Hence, the strategies (i) and (ii) coincide.
+
+
+## Question 4. Solutions.
+
+Firstly, I load the data set for this question and check the dimension of it.
+```{r}
+load("dataex4.Rdata")
+dim(dataex4)
+```
+
+**(a)** The R code for this question is shown below.
+```{r}
+# Only impute the variables `y` and `x1` in step 1
+impu1_Q4 <- mice(dataex4, m = 50, seed = 1, printFlag = FALSE)
+# Estimate the regression coefficients of the model of interest in step 2
+fit1_Q4 <- with(impu1_Q4, lm(y ~ x1 + x2 + x1*x2))
+# Pool the results in step 3
+estims1_Q4 <- pool(fit1_Q4)
+# Display the outcome of the parameter estimation
+summary(estims1_Q4, conf.int = TRUE)
+```
+By only imputing the variables `y` and `x1` in step 1, the estimates of $\beta_1$, $\beta_2$ and $\beta_3$ are 1.4112333, 1.9658191 and 0.7550367 respectively, and the 95% confidence intervals for $\beta_1$, $\beta_2$ and $\beta_3$ are [1.219397, 1.6030697], [1.860657, 2.0709812] and [0.642302, 0.8677715] respectively. Only the estimate of $\beta_2$ is relatively accurate and the true value of $\beta_2$ falls into the estimated 95% confidence interval of it. However, the estimate of $\beta_1$ is significantly larger and the estimate of $\beta_3$ is significantly smaller and they all fall outside their corresponding estimated 95% confidence intervals. In the imputation process, the interaction variable is left outside and the variables `y` and `x1` are imputed only by other individual variables. Therefore, the imputation model in step 1 deviates from the original model used to generate the data, and so the imputation process would not be so accurate and may contain some errors. Consequently, there may be some deviations between the final results and the real values.
+
+**(b)** The R code for this question is shown in the following.
+```{r}
+# Calculate the intersection variable and append it as a variable to the new data set
+# The new variable is named `x1x2`
+data_Q4 <- cbind(dataex4, "x1x2" = dataex4$x1 * dataex4$x2)
+
+# Do the setup run of `mice()` function
+impu0_Q4 <- mice(data_Q4, maxit = 0)
+# Extract and modify the imputation methods
+meth_Q4 <- impu0_Q4$method
+# Use passive imputation to impute the intersection variable `x1x2`
+meth_Q4["x1x2"] <- "~I(x1*x2)"
+# Modify the predictor matrix to prevent feedback from the
+# intersection variable `x1x2` in the imputation of `x1` and `x2`
+pred_Q4 <- impu0_Q4$predictorMatrix
+pred_Q4[c("x1", "x2"), "x1x2"] <- 0
+
+# Perform multiple imputation on the new data set as the requirements of this question
+impu2_Q4 <- mice(data_Q4, method = meth_Q4, predictorMatrix = pred_Q4,
+                 m = 50, seed = 1, printFlag = FALSE)
+fit2_Q4 <- with(impu2_Q4, lm(y ~ x1 + x2 + x1*x2))
+estims2_Q4 <- pool(fit2_Q4)
+summary(estims2_Q4, conf.int = TRUE)
+```
+The estimates of $\beta_1$, $\beta_2$ and $\beta_3$ are 1.1926170, 1.9964402 and 0.8740573 respectively, and the 95% confidence intervals for $\beta_1$, $\beta_2$ and $\beta_3$ are [1.0034980, 1.3817360], [1.8989468, 2.0939336] and [0.7615712, 0.9865434] respectively. Compared with only imputing the variables `y` and `x1` in step 1 as done in question (a), the results are much more accurate when the passive imputation is used to impute the intersection variable in the imputation process. We can see that the estimate of $\beta_2$ is extremely close to its true value and the estimated 95% confidence interval of it is slightly narrower than the last question. Although the true values of $\beta_1$ and $\beta_3$ are still outside their estimated 95% confidence intervals, the estimates of $\beta_1$ and $\beta_3$ are obviously more accurate than question (a) and they are very close to the bounds of their confidence intervals.
+
+**(c)** The R code for this question is shown as follows.
+```{r}
+# Perform the multiple imputation and impute the intersection variable
+# `x1x2` as it is just another variable
+impu3_Q4 <- mice(data_Q4, m = 50, seed = 1, printFlag = FALSE)
+# Directly use the variable named `x1x2` for the intersection term in step 2
+fit3_Q4 <- with(impu3_Q4, lm(y ~ x1 + x2 + x1x2))
+estims3_Q4 <- pool(fit3_Q4)
+summary(estims3_Q4, conf.int = TRUE)
+```
+The estimates of $\beta_1$, $\beta_2$ and $\beta_3$ are 1.003930, 2.026180 and 1.017793 respectively, and the 95% confidence intervals for $\beta_1$, $\beta_2$ and $\beta_3$ are [0.8414967, 1.166363], [1.9398113, 2.112548] and [0.9303479, 1.105238] respectively. When we treat the intersection variable `x1x2` as just another variable, i.e., an extra variable named `x1x2`, the final results are much more accurate than the previous two questions. The estimates of $\beta_1$, $\beta_2$ and $\beta_3$ are very close to their true values and the true values of $\beta_1$, $\beta_2$ and $\beta_3$ are just located in their 95% confidence intervals. Also, the confidence intervals in this question are further slightly narrower than question (a) and (b). Consequently, the *just another variable* approach performs very well in estimating the parameters of the substantive model this time.
+
+**(d)** Although the *just another variable* approach for imputing interactions performs very well in this question, it also has some conceptual drawbacks. The obvious conceptual drawback of this approach is that the relationship between the intersection variable `x1x2` and the individual variables `x1` and `x2` is treated as stochastic relation instead of deterministic relation. However, the intersection variable `x1x2` is a deterministic function of `x1` and `x2`, whose value is exactly determined by `x1` and `x2`. Therefore, if we still impute `x1x2` from other variables directly, it will violate the real relationship between `x1x2` and other variables and the values of `x1x2` may be inconsistent with the values or imputed values of `x1` and `x2`. Hence, the precision of the results of analysis may be consequently reduced.
+
+
+## Question 5. Solutions.
+
+Let me first start by loading and inspecting the data set.
+```{r}
+load("NHANES2.Rdata")
+dim(NHANES2)
+summary(NHANES2)
+```
+This data set has 12 variables and 500 observations. The variables `bili`, `chol`, `HDL`, `hgt`, `educ`, `SBP`, `hypten` and `WC` are subject to missingness but the proportions of missing values of these variables are not large which are all less than 10%.
+
+Let me now further inspect the missing data patterns.
+```{r}
+pattern <- md_pattern(NHANES2, pattern = TRUE, color = c("deepskyblue3", 'firebrick2'))
+pattern$plot
+```
+
+It can be seen from the above plot that there are 411 observations with no missing values in any of the variables, and some observations have missing values in only one variable but the others are subject to missingness in several variables. Overall, the rate of missingness in this data set is relatively low.
+
+Let me now visualize how the distributions of the observed values in different variables look like.
+```{r}
+par(mar = c(2, 1, 2, 1), mgp = c(3, 1, 0))
+plot_all(NHANES2)
+```
+
+We can see from the above figure that the distributions of the continuous variables, except `hgt`, are somewhat skewed, and so we could choose predictive mean
+matching to impute the missing values.
+
+I will now proceed to the imputation step. We do not have any variables that can be written as a deterministic function of other variables in the data set, and furthermore from the information available there is not any reason to change the `predictorMatrix`. The variables that are not in our substantive model, act here as auxiliary variables which typically also improve the plausibility of the missing at random assumption. Consequently, there is no need to perform the setup run of `mice()`, so I proceed to step one of multiple imputation directly. For the final imputation, I will use `maxit = 30` and `M = 20`.
+```{r}
+impu_Q5 <- mice(NHANES2, maxit = 30, m = 20, seed = 1, printFlag = FALSE)
+```
+
+Let me check if `mice()` found any problem during the imputation.
+```{r}
+impu_Q5$loggedEvents
+```
+
+Let me now look at the chains of the imputed values to check whether there are convergence problems. The figure below indicates good convergence of the chains.
+```{r, fig.width = 6, fig.height = 12}
+plot(impu_Q5, layout = c(2, 8))
+```
+
+Then, let me inspect if the distribution of the imputed values agrees with the distribution of the observed values.
+```{r, warning = FALSE}
+densityplot(impu_Q5)
+source("https://gist.githubusercontent.com/NErler/0d00375da460dd33839b98faeee2fdab/raw/c6f537ecf80eddcefd94992ec7926aa57d454536/propplot.R")
+propplot(impu_Q5)
+```
+
+Although there are significant discrepancies between the observed and imputed values for educational status, we do not need to worry about it because this variable has only 1 missing values. For the variable `hgt`, there are also some discrepancies between the observed and imputed values, but this variable only has 11 missing values, so it is also not too problematic. In addition, everything looks reasonable.
+
+After having confirmed that our imputation step is successful, we can proceed to the analysis of the imputed data and fit our substantive model of interest.
+```{r}
+fit_Q5 <- with(impu_Q5, lm(wgt ~ gender + age + hgt + WC))
+```
+We can further explore the information contained in the object `fit_Q5`. For example, we can look at the summary of the fitted model in the first imputed data set.
+```{r}
+summary(fit_Q5$analyses[[1]])
+```
+Then, let us check the validity of model’s assumptions, i.e., performing diagnostic checks. To begin with, we can look at the plot of the residuals versus fitted values to check the assumptions of linearity and homoscedasticity.
+```{r}
+plot(fit_Q5$analyses[[1]]$fitted.values, residuals(fit_Q5$analyses[[1]]),
+xlab = "Fitted values", ylab = "Residuals", col = "blue2")
+```
+
+On the other hand, we can also check the QQ-plot.
+```{r}
+qqnorm(rstandard(fit_Q5$analyses[[1]]), col = "blue2", xlim = c(-3.5, 3.5), ylim = c(-4, 4))
+qqline(rstandard(fit_Q5$analyses[[1]]), col = "red")
+```
+
+From these figures, we can find nothing that looks suspicious, so now we can proceed to the step 3, pooling the results.
+
+Finally, I am going to pool the results.
+```{r}
+# Pool the results and display the summary of analysis
+estims_Q5 <- pool(fit_Q5)
+estims_Q5
+summary_Q5 <- summary(estims_Q5, conf.int = TRUE)
+summary_Q5
+
+# Show the estimates of the parameters of the regression model in a table
+df <- data.frame("Estimate" = summary_Q5[, 2],
+                 "Lq" = summary_Q5[, 7], "Uq" = summary_Q5[, 8])
+rownames(df) <- c("$\\beta_0$", "$\\beta_1$", "$\\beta_2$", "$\\beta_3$", "$\\beta_4$")
+colnames(df) <- c("Estimate", "2.5% quantile", "97.5% quantile")
+kable(df, escape = FALSE, digits = 4, caption = 
+      "Regression coefficient estimates and corresponding 95% confidence intervals")
+```
+The (pooled) regression coefficient estimates of $\beta_0$, $\beta_1$, $\beta_2$, $\beta_3$ and $\beta_4$, and the corresponding 95% confidence intervals for these parameters are shown in Table 1. In addition, what is worth being noticed is that the value of $M$ should be increased if the results change by a large extent as different random seeds are tried.
